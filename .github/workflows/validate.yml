@@ -25,7 +25,9 @@ jobs:
           bash -n bin/lookaway bin/lookaway-hypr
           bash tests/test_hypr_installer.sh
           luac5.4 -p hypr/lookaway.lua
-          test -x bin/lookaway bin/lookaway-hypr bin/lookaway-sensor
+          for file in bin/lookaway bin/lookaway-hypr bin/lookaway-sensor; do
+            test -x "$file"
+          done
       - name: Validate repository contents
         run: |
           test -s LICENSE
