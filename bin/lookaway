@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf '%s\n' \
+    'Usage: lookaway <on|off|toggle|recenter|status|demo|comfort|full|test>' \
+    '' \
+    '  on|off|toggle        enable or disable the look-away shield' \
+    '  recenter             set the current head orientation as screen center' \
+    '  status               print JSON state' \
+    '  demo <on|off>        run the synthetic orientation feed (no AirPods needed)' \
+    '  comfort <deg>        comfort-zone angle (2-30)' \
+    '  full <deg>           full-cover angle (comfort+1 .. 60)' \
+    '  test <deg|off>       force a fixed offset angle for preview'
+}
+
+case "${1:-}" in
+  on|enable)   omarchy-shell lookaway enable ;;
+  off|disable) omarchy-shell lookaway disable ;;
+  toggle)      omarchy-shell lookaway toggle ;;
+  recenter|center) omarchy-shell lookaway recenter ;;
+  status)      omarchy-shell lookaway status ;;
+  demo)        omarchy-shell lookaway demo "${2:-on}" ;;
+  comfort)     omarchy-shell lookaway comfort "${2:-15}" ;;
+  full)        omarchy-shell lookaway full "${2:-33}" ;;
+  test)        omarchy-shell lookaway test "${2:-off}" ;;
+  help|-h|--help|'')
+    usage ;;
+  *)
+    printf 'lookaway: unknown command: %s\n' "$1" >&2
+    usage >&2
+    exit 2 ;;
+esac
