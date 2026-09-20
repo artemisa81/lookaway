@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.artemisa81.lookaway",
   "name": "LookAway",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "artemisa81",
   "license": "GPL-3.0-or-later",
   "description": "Soften and cover the screen when your AirPods say you looked away. Head-tracked privacy scrim driven by earbud motion sensors.",

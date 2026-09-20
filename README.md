@@ -27,6 +27,8 @@ and recordings; see the caveat below.
 No screen-recording permission, no screenshotting, no cloud, and no Python
 packages beyond the standard library.
 
+![LookAway settings panel](preview.png)
+
 ## Requirements
 
 - Omarchy Quattro (Quickshell shell + Hyprland), with a Bluetooth Classic
