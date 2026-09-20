@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.artemisa81.lookaway",
   "name": "LookAway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "artemisa81",
   "license": "GPL-3.0-or-later",
   "description": "Soften and cover the screen when your AirPods say you looked away. Head-tracked privacy scrim driven by earbud motion sensors.",
@@ -27,6 +27,9 @@
       "comfortDeg": 15,
       "fullCoverDeg": 33,
       "dimStrength": 0.92,
+      "failSafe": false,
+      "hysteresisDeg": 2,
+      "smoothingMs": 140,
       "mac": "",
       "startVariant": "auto"
     },
@@ -53,10 +56,11 @@
       },
       {
         "key": "startVariant",
-        "type": "string",
+        "type": "enum",
         "label": "Head-tracking start packet",
         "defaultValue": "auto",
-        "description": "auto | alt | def. Auto falls back from alt to def if no sensor stream arrives."
+        "options": ["auto", "alt", "def"],
+        "description": "auto tries the tested packet first, then falls back if no sensor stream arrives."
       },
       {
         "key": "comfortDeg",
@@ -86,6 +90,33 @@
         "max": 1,
         "step": 0.05,
         "defaultValue": 0.92
+      },
+      {
+        "key": "failSafe",
+        "type": "boolean",
+        "label": "Cover when the sensor is lost",
+        "defaultValue": false,
+        "description": "After a live session, cover the screen instead of opening it when AirPods stop reporting. Disable this if startup without AirPods must remain unobstructed."
+      },
+      {
+        "key": "hysteresisDeg",
+        "type": "number",
+        "label": "Threshold hysteresis (degrees)",
+        "min": 0,
+        "max": 8,
+        "step": 0.5,
+        "defaultValue": 2,
+        "description": "Extra release margin that prevents jitter near the comfort threshold. Use 0 for maximum sensitivity or 2–4 for a steadier shield."
+      },
+      {
+        "key": "smoothingMs",
+        "type": "integer",
+        "label": "Visual smoothing (milliseconds)",
+        "min": 0,
+        "max": 500,
+        "step": 10,
+        "defaultValue": 140,
+        "description": "Fade duration for the scrim. Lower is more immediate; higher is calmer but less instantaneous."
       }
     ]
   }

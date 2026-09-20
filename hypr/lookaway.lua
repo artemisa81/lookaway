@@ -1,3 +1,6 @@
+-- LookAway-managed: io.github.artemisa81.lookaway
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2026 artemisa81
 -- LookAway — Hyprland layer rules for the privacy scrim.
 --
 -- Install: copy this file to ~/.config/hypr/lookaway.lua and add
@@ -10,6 +13,16 @@
 -- behind it (windows + wallpaper) without the plugin ever capturing the screen.
 -- The surface's own alpha gradient controls how much of the blurred backdrop
 -- shows, which is what produces the directional look-away transition.
+-- This enables Hyprland's global blur engine; the layer rule below limits the
+-- actual backdrop blur to LookAway's surface.
+hl.config({
+  decoration = {
+    blur = {
+      enabled = true,
+    },
+  },
+})
+
 hl.layer_rule({
   match = { namespace = "lookaway-scrim" },
   blur = true,

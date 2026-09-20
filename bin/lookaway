@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 artemisa81
+
 set -euo pipefail
 
 usage() {
   printf '%s\n' \
-    'Usage: lookaway <on|off|toggle|recenter|status|demo|comfort|full|test>' \
+    'Usage: lookaway <on|off|toggle|recenter|status|demo|comfort|full|failsafe|hysteresis|smoothing|test>' \
     '' \
     '  on|off|toggle        enable or disable the look-away shield' \
     '  recenter             set the current head orientation as screen center' \
@@ -11,6 +14,9 @@ usage() {
     '  demo <on|off>        run the synthetic orientation feed (no AirPods needed)' \
     '  comfort <deg>        comfort-zone angle (2-30)' \
     '  full <deg>           full-cover angle (comfort+1 .. 60)' \
+    '  failsafe <on|off>    cover after a live sensor session is lost' \
+    '  hysteresis <deg>     threshold release margin (0-8)' \
+    '  smoothing <ms>       visual fade duration (0-500)' \
     '  test <deg|off>       force a fixed offset angle for preview'
 }
 
@@ -23,6 +29,9 @@ case "${1:-}" in
   demo)        omarchy-shell lookaway demo "${2:-on}" ;;
   comfort)     omarchy-shell lookaway comfort "${2:-15}" ;;
   full)        omarchy-shell lookaway full "${2:-33}" ;;
+  failsafe)    omarchy-shell lookaway failsafe "${2:-on}" ;;
+  hysteresis)  omarchy-shell lookaway hysteresis "${2:-2}" ;;
+  smoothing)   omarchy-shell lookaway smoothing "${2:-140}" ;;
   test)        omarchy-shell lookaway test "${2:-off}" ;;
   help|-h|--help|'')
     usage ;;

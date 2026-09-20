@@ -1,0 +1,34 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install Lua syntax checker
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Validate metadata and scripts
+        run: |
+          python3 -m json.tool manifest.json >/dev/null
+          python3 -m py_compile bin/lookaway-sensor tests/test_sensor.py
+          python3 -m unittest discover -s tests -v
+          bash -n bin/lookaway bin/lookaway-hypr
+          bash tests/test_hypr_installer.sh
+          luac5.4 -p hypr/lookaway.lua
+          test -x bin/lookaway bin/lookaway-hypr bin/lookaway-sensor
+      - name: Validate repository contents
+        run: |
+          test -s LICENSE
+          test -s NOTICE
+          test -s SECURITY.md
+          test "$(git ls-files '*.py' '*.qml' '*.lua' '*.sh' | wc -l)" -gt 0

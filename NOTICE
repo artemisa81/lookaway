@@ -1,0 +1,20 @@
+LookAway third-party attribution
+
+LookAway is a derivative work under GPL-3.0-or-later. Its AirPods Accessory
+Protocol packet handling and orientation implementation were informed by the
+following GPLv3 projects:
+
+1. LibrePods
+   https://github.com/kavishdevar/librepods
+   Source revision reviewed: 53679cc90222e94ade84e66542d97ace2540e626
+   Relevant source: HeadOrientation.kt and related AAP head-tracking code.
+
+2. pods-head-tracker
+   https://github.com/batubozkan/pods-head-tracker
+   Source revision reviewed: 2a5e689c57b4f62bed5c9592c25756edb7df05c3
+   Relevant source: Linux Bluetooth/L2CAP connection and packet-stream code.
+
+LookAway's Python helper is an independent implementation adapted from the
+protocol and mathematical behavior of those projects. Their original GPLv3
+licenses are compatible with and require the GPL-3.0-or-later license used by
+this repository. See LICENSE for the full license text.

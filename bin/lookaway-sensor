@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 artemisa81
 """Orientation feed for the LookAway Omarchy plugin.
 
 Emits one JSON object per line on stdout:
@@ -62,8 +64,9 @@ FULL_SCALE = 32000.0
 
 CALIB_N = 10
 CALIB_STILL_MAX = 800
-CALIB_MAX_TRIES = 6
 START_RETRY_SECS = 4.0
+SENSOR_START_TIMEOUT_SECS = 8.0
+SENSOR_STALE_SECS = 8.0
 RECONNECT_SECS = 3.0
 NO_AIRPODS_SECS = 15.0
 
@@ -96,7 +99,10 @@ def decode_ear(packet):
     """Return the two raw pod states, or None if this is not an ear packet."""
     if len(packet) < 8 or packet[:6] != EAR_PREFIX:
         return None
-    return packet[6], packet[7]
+    states = (packet[6], packet[7])
+    if any(state not in (0x00, 0x01, 0x02) for state in states):
+        return None
+    return states
 
 
 def median(values):
@@ -109,14 +115,13 @@ class Calibrator:
 
     Folds samples into wrap-safe deltas from the batch's first sample and
     reduces by median, so a raw origin near the +/-32768 seam cannot skew the
-    result. A batch that moves too much is retried up to CALIB_MAX_TRIES
-    times, then accepted anyway so a fidgety start can only delay tracking.
+    result. A batch that moves too much is discarded and retried; accepting a
+    moving pose as neutral would make the privacy boundary wrong from startup.
     """
 
     def __init__(self):
         self.ref = None
         self.samples = []
-        self.tries = 0
 
     def feed(self, *vals):
         if self.ref is None:
@@ -126,8 +131,7 @@ class Calibrator:
             return None
         axes = list(zip(*self.samples))
         spread = max(max(a) - min(a) for a in axes)
-        if spread > CALIB_STILL_MAX and self.tries < CALIB_MAX_TRIES:
-            self.tries += 1
+        if spread > CALIB_STILL_MAX:
             self.ref, self.samples = None, []
             log("moving during calibration - holding still, face forward")
             return None
@@ -153,28 +157,29 @@ def decode_orientation(packet, neutral):
 
 
 def find_airpods():
-    """Return the MAC of a paired/known AirPods, or None."""
-    override = os.environ.get("LOOKAWAY_AIRPODS_MAC")
+    """Return paired/known AirPods MACs, preserving bluetoothctl order."""
+    override = os.environ.get("LOOKAWAY_AIRPODS_MAC", "").strip()
     if override:
-        return override
+        return [override]
     try:
         out = subprocess.run(["bluetoothctl", "devices"], capture_output=True,
-                             text=True, timeout=5).stdout
+                             text=True, errors="replace", timeout=5).stdout or ""
     except (OSError, subprocess.SubprocessError) as error:
         log(f"bluetoothctl unavailable: {error}")
-        return None
+        return []
+    devices = []
     for line in out.splitlines():
-        parts = line.split(" ", 2)
+        parts = line.split(maxsplit=2)
         if len(parts) == 3 and parts[0] == "Device" and "airpods" in parts[2].lower():
-            return parts[1]
-    return None
+            devices.append(parts[1])
+    return devices
 
 
 def is_connected(mac):
     """True when BlueZ reports the device as connected."""
     try:
         out = subprocess.run(["bluetoothctl", "info", mac], capture_output=True,
-                             text=True, timeout=5).stdout
+                             text=True, errors="replace", timeout=5).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return False
     for line in out.splitlines():
@@ -184,19 +189,28 @@ def is_connected(mac):
 
 
 def open_l2cap(mac):
-    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
-    sock.setsockopt(SOL_BLUETOOTH, BT_SECURITY, struct.pack("BB", BT_SECURITY_MEDIUM, 0))
-    sock.settimeout(2.0)
-    sock.connect((mac, AACP_PSM))
-    return sock
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+        sock.setsockopt(SOL_BLUETOOTH, BT_SECURITY, struct.pack("BB", BT_SECURITY_MEDIUM, 0))
+        sock.settimeout(2.0)
+        sock.connect((mac, AACP_PSM))
+        return sock
+    except Exception:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        raise
 
 
 def handshake(sock):
-    sock.send(HANDSHAKE)
+    sock.sendall(HANDSHAKE)
     time.sleep(0.2)
-    sock.send(FEATURE_FLAGS)
+    sock.sendall(FEATURE_FLAGS)
     time.sleep(0.2)
-    sock.send(NOTIFICATIONS)
+    sock.sendall(NOTIFICATIONS)
     time.sleep(0.2)
 
 
@@ -217,8 +231,9 @@ def stream(mac, start_mode, probe):
 
 def pump(sock, starts, probe):
     start_index = 0
-    sock.send(starts[start_index][1])
+    sock.sendall(starts[start_index][1])
     last_start = time.monotonic()
+    last_head_tracking = None
     neutral = None
     calib = Calibrator()
     in_ear = None
@@ -232,13 +247,23 @@ def pump(sock, starts, probe):
 
         now = time.monotonic()
 
-        if packet is None:
-            # No data: if head tracking never started, try the other variant.
-            if neutral is None and len(starts) > 1 and now - last_start >= START_RETRY_SECS:
-                start_index = (start_index + 1) % len(starts)
-                sock.send(starts[start_index][1])
+        if packet == b"":
+            raise ConnectionError("L2CAP channel closed")
+
+        if neutral is None and not paused and now - last_start >= START_RETRY_SECS:
+            if start_index + 1 < len(starts):
+                start_index += 1
+                sock.sendall(starts[start_index][1])
                 last_start = now
                 log(f"no sensor data - trying start variant {starts[start_index][0]}")
+            elif now - last_start >= SENSOR_START_TIMEOUT_SECS:
+                raise ConnectionError("head-tracking stream did not start")
+
+        if (neutral is not None and not paused and last_head_tracking is not None
+                and now - last_head_tracking >= SENSOR_STALE_SECS):
+            raise ConnectionError("head-tracking stream stalled")
+
+        if packet is None:
             continue
 
         if not is_head_tracking(packet):
@@ -255,6 +280,7 @@ def pump(sock, starts, probe):
                     # Back in the ears: capture a fresh neutral.
                     paused = False
                     neutral, calib = None, Calibrator()
+                    last_start = now
                     log("buds back in ear - recalibrating")
                     emit({"connected": False, "source": "airpods", "phase": "calibrating"})
                 continue
@@ -262,6 +288,8 @@ def pump(sock, starts, probe):
                 op = packet[4] if len(packet) > 4 else -1
                 log(f"rx op=0x{op:02x} len={len(packet)}")
             continue
+
+        last_head_tracking = now
 
         if paused:
             continue
@@ -286,15 +314,16 @@ def pump(sock, starts, probe):
 def run_live(args):
     last_missing_log = 0.0
     while True:
-        mac = args.mac or find_airpods()
+        candidates = [args.mac] if args.mac else find_airpods()
+        mac = next((candidate for candidate in candidates if is_connected(candidate)), None)
         # Don't hammer the L2CAP connect while the buds are paired but off.
-        if not mac or not is_connected(mac):
+        if not mac:
             emit({"connected": False, "source": "airpods",
-                  "phase": "waiting" if mac else "no-airpods"})
+                  "phase": "waiting" if candidates else "no-airpods"})
             now = time.monotonic()
             if now - last_missing_log > NO_AIRPODS_SECS:
                 last_missing_log = now
-                log("waiting for AirPods" if mac else
+                log("waiting for AirPods" if candidates else
                     "no AirPods found; pair them (bluetoothctl) or pass --mac")
             time.sleep(NO_AIRPODS_SECS)
             continue
@@ -308,6 +337,10 @@ def run_live(args):
 
 
 def run_demo(args):
+    if not math.isfinite(args.rate) or args.rate <= 0:
+        raise ValueError("demo rate must be a finite positive number")
+    if not math.isfinite(args.period) or args.period <= 0:
+        raise ValueError("demo period must be a finite positive number")
     rate = max(1.0, args.rate)
     dt = 1.0 / rate
     start = time.time()
@@ -328,9 +361,13 @@ def run_demo(args):
 
 
 def selftest():
-    assert wrap_s16(32768) == -32768
-    assert wrap_s16(-32769) == 32767
-    assert wrap_s16(10 - 20) == -10
+    def check(condition, message):
+        if not condition:
+            raise AssertionError(message)
+
+    check(wrap_s16(32768) == -32768, "positive int16 wrap")
+    check(wrap_s16(-32769) == 32767, "negative int16 wrap")
+    check(wrap_s16(10 - 20) == -10, "ordinary delta")
     packet = bytearray(HT_MIN)
     packet[0:10] = HT_PREFIX
     packet[10] = 0x44
@@ -342,38 +379,62 @@ def selftest():
     # o2 == o3 == +16000 with a zero neutral => pitch 90, yaw 0.
     put(packet, OFF_O2, 16000)
     put(packet, OFF_O3, 16000)
-    assert is_head_tracking(bytes(packet))
+    check(is_head_tracking(bytes(packet)), "head-tracking packet detection")
     out = decode_orientation(bytes(packet), (0, 0, 0))
-    assert abs(out["pitch"] - 90.0) < 0.001, out
-    assert abs(out["yaw"]) < 0.001, out
+    check(abs(out["pitch"] - 90.0) < 0.001, f"pitch: {out}")
+    check(abs(out["yaw"]) < 0.001, f"yaw: {out}")
 
     # o2 == +32000, o3 == -32000 => yaw 180, pitch 0.
     put(packet, OFF_O2, 32000)
     put(packet, OFF_O3, -32000)
     out = decode_orientation(bytes(packet), (0, 0, 0))
-    assert abs(out["yaw"] - 180.0) < 0.001, out
-    assert abs(out["pitch"]) < 0.001, out
+    check(abs(out["yaw"] - 180.0) < 0.001, f"yaw wrap: {out}")
+    check(abs(out["pitch"]) < 0.001, f"pitch wrap: {out}")
 
     # A constant batch calibrates to that value.
     calib = Calibrator()
     for _ in range(CALIB_N):
         neutral = calib.feed(100, 200, 300)
-    assert neutral == (100, 200, 300), neutral
+    check(neutral == (100, 200, 300), f"neutral: {neutral}")
 
     # Ear packets decode; head-tracking packets do not.
     ear = bytearray(EAR_PREFIX + bytes([0x00, 0x01]))
-    assert decode_ear(bytes(ear)) == (0x00, 0x01)
-    assert decode_ear(bytes(packet)) is None
+    check(decode_ear(bytes(ear)) == (0x00, 0x01), "ear packet")
+    check(decode_ear(bytes(EAR_PREFIX + bytes([0x03, 0x03]))) is None,
+          "unknown ear state")
+    check(decode_ear(bytes(packet)) is None, "head-tracking is not ear packet")
 
     print("selftest OK")
+
+
+def positive_float(value):
+    try:
+        number = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected a number") from error
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("expected a finite positive number")
+    return number
+
+
+def nonnegative_float(value):
+    try:
+        number = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected a number") from error
+    if not math.isfinite(number) or number < 0:
+        raise argparse.ArgumentTypeError("expected a finite non-negative number")
+    return number
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LookAway orientation feed")
     parser.add_argument("--demo", action="store_true", help="synthetic orientation sweep")
-    parser.add_argument("--rate", type=float, default=30.0, help="demo samples per second")
-    parser.add_argument("--amplitude", type=float, default=40.0, help="demo peak yaw in degrees")
-    parser.add_argument("--period", type=float, default=16.0, help="demo sweep period in seconds")
+    parser.add_argument("--rate", type=positive_float, default=30.0, help="demo samples per second")
+    parser.add_argument("--amplitude", type=nonnegative_float, default=40.0,
+                        help="demo peak yaw in degrees")
+    parser.add_argument("--period", type=positive_float, default=16.0,
+                        help="demo sweep period in seconds")
     parser.add_argument("--mac", default=None, help="AirPods MAC (else auto-detect / env)")
     parser.add_argument("--start", choices=["auto", "alt", "def"], default="auto",
                         help="head-tracking start variant")

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 artemisa81
+
+set -euo pipefail
+
+source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source_file="$source_dir/hypr/lookaway.lua"
+target_file="${LOOKAWAY_HYPR_RULE_PATH:-$HOME/.config/hypr/lookaway.lua}"
+marker='-- LookAway-managed: io.github.artemisa81.lookaway'
+
+usage() {
+  printf '%s\n' \
+    'Usage: lookaway-hypr <install|uninstall>' \
+    '' \
+    '  install      install the managed Hyprland rule, backing up an older copy' \
+    '  uninstall    remove only a LookAway-managed rule, keeping a backup'
+}
+
+require_managed_or_absent() {
+  if [[ -L "$target_file" ]]; then
+    printf 'lookaway-hypr: refusing to modify symlink: %s\n' "$target_file" >&2
+    exit 1
+  fi
+  if [[ -e "$target_file" && ! -f "$target_file" ]]; then
+    printf 'lookaway-hypr: refusing to modify non-regular file: %s\n' "$target_file" >&2
+    exit 1
+  fi
+  if [[ -f "$target_file" ]] && ! grep -Fqx -- "$marker" "$target_file"; then
+    printf 'lookaway-hypr: refusing to replace an unowned file: %s\n' "$target_file" >&2
+    printf 'lookaway-hypr: move it aside or set LOOKAWAY_HYPR_RULE_PATH\n' >&2
+    exit 1
+  fi
+}
+
+install_rule() {
+  [[ -f "$source_file" ]] || {
+    printf 'lookaway-hypr: source rule is missing: %s\n' "$source_file" >&2
+    exit 1
+  }
+  require_managed_or_absent
+  mkdir -p -- "$(dirname -- "$target_file")"
+  if [[ -f "$target_file" ]] && ! cmp -s -- "$source_file" "$target_file"; then
+    cp --backup=numbered -- "$target_file" "$target_file.lookaway-backup"
+  fi
+  install -m 0644 -- "$source_file" "$target_file"
+  printf 'installed %s\n' "$target_file"
+}
+
+uninstall_rule() {
+  require_managed_or_absent
+  if [[ ! -f "$target_file" ]]; then
+    printf 'not installed: %s\n' "$target_file"
+    return 0
+  fi
+  backup="$target_file.backup.$(date +%Y%m%d%H%M%S)"
+  cp -- "$target_file" "$backup"
+  rm -- "$target_file"
+  printf 'removed %s (backup: %s)\n' "$target_file" "$backup"
+}
+
+case "${1:-}" in
+  install) install_rule ;;
+  uninstall) uninstall_rule ;;
+  help|-h|--help|'') usage ;;
+  *) printf 'lookaway-hypr: unknown command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+esac
