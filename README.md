@@ -89,7 +89,8 @@ so the long-lived service instance definitely loads the new source.
 
 ## Usage
 
-- **Bar widget** — left-click toggles the shield, right-click re-centers.
+- **Bar widget** — left-click toggles the shield, right-click re-centers, and
+  middle-click opens the settings window.
 - **CLI** (`bin/lookaway`) — optionally put it on `PATH` first:
 
   ```bash
